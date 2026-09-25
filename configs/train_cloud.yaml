@@ -1,0 +1,23 @@
+# Training on a multi-GPU cloud machine: one process per GPU,
+#   torchrun --nproc-per-node=gpu -m dispick.cli train --config configs/train_cloud.yaml
+# The batch is per GPU; the data workers per process (budget about 6 CPU cores per GPU:
+# synthesis runs on the CPUs, about 16 ms an image and core).
+output: ../runs/cloud
+data:
+  bank: ../data/bank.h5
+  validation: ../data/validation.h5
+  grid: [256, 256]
+  batch_size: 48
+  workers: 6
+network:
+  widths: [32, 64, 128, 256, 384]
+  n_modes: 1
+optim:
+  lr: 0.0015
+  steps: 150000
+  warmup_steps: 3000
+runtime:
+  device: auto
+  precision: auto
+  validate_every: 2500
+  checkpoint_every: 2500

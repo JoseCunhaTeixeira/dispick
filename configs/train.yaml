@@ -1,0 +1,22 @@
+# Training on one GPU, from endless synthetic images. Paths are relative to this file.
+#   dispick train --config configs/train.yaml
+# Override any key: --set optim.steps=200000 --set data.batch_size=64
+output: ../runs/base
+data:
+  bank: ../data/bank.h5
+  validation: ../data/validation.h5
+  grid: [256, 256]
+  batch_size: 32
+  workers: 10
+network:
+  widths: [32, 64, 128, 256, 384]
+  n_modes: 1
+optim:
+  lr: 0.001
+  steps: 100000
+  warmup_steps: 2000
+runtime:
+  device: auto
+  precision: auto
+  validate_every: 2000
+  checkpoint_every: 2000

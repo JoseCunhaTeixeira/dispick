@@ -1,0 +1,162 @@
+[project]
+name = "dispick"
+version = "0.1.0"
+description = "Automatic picking of surface-wave dispersion curves (M0) and quality rating of phase-shift dispersion images, with a network trained on physics-based synthetic data."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+authors = [
+    { name = "J. Cunha Teixeira", email = "jose.cunha-teixeira@protonmail.com" },
+]
+dependencies = [
+    "numpy>=2.3",
+    "scipy>=1.16",
+    "h5py>=3.14",
+    "pydantic>=2.12",
+    "pyyaml>=6.0",
+    "threadpoolctl>=3.5",
+]
+
+[project.optional-dependencies]
+# Inference without PyTorch: the exported ONNX model, on CPU.
+onnx = ["onnxruntime>=1.23"]
+# The synthetic data: Rayleigh modes and eigenfunctions.
+synth = ["disba>=0.7"]
+# Figures (evaluation reports, previews).
+plot = ["matplotlib>=3.10"]
+# Training and PyTorch inference. Pick one PyTorch build: cpu, rocm or cuda.
+train = ["tensorboard>=2.20", "onnx>=1.19", "onnxscript>=0.5"]
+cpu = ["torch>=2.10"]
+rocm = ["torch>=2.10", "triton-rocm>=3.0; sys_platform == 'linux'"]
+cuda = ["torch>=2.10"]
+# The adapter sigpipe, PAC and PACo use (DispersionImage in, curves out).
+sigpipe = ["sigpipe @ git+https://github.com/JoseCunhaTeixeira/sigpipe"]
+
+[project.scripts]
+dispick = "dispick.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.14", "pyright>=1.1", "pre-commit>=4"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dispick = ["py.typed", "models/*.onnx", "models/*.json"]
+
+
+# -------------------------
+# PyTorch builds: one index per extra
+# -------------------------
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "rocm" }, { extra = "cuda" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+triton-rocm = [{ index = "pytorch-rocm", extra = "rocm" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+
+# -------------------------
+# Pyright configuration
+# -------------------------
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+
+include = ["src", "tests"]
+
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "build",
+    "dist",
+    "**/node_modules",
+    "**/.*",
+]
+
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnnecessaryIsInstance = false
+
+
+# -------------------------
+# Ruff configuration
+# -------------------------
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+    "PIE", # flake8-pie
+    "RET", # flake8-return
+    "PTH", # pathlib usage
+    "NPY", # NumPy rules
+    "RUF", # Ruff-specific rules
+    "ANN", # annotations
+    "ARG", # unused arguments
+    "ERA", # commented-out code
+]
+
+ignore = [
+    "E501", # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dispick"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+
+# -------------------------
+# Pytest configuration
+# -------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: long tests (a training run), deselect with -m 'not slow'"]
+
+[tool.coverage.run]
+source = ["src/dispick"]

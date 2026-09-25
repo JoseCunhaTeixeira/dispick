@@ -1,0 +1,7 @@
+# The modal bank: random near-surface earth models and their Rayleigh modes, normalized.
+# `dispick bank build --config configs/bank.yaml --out data/bank.h5` (about 40 minutes on 10
+# cores for 50 000 models). Every field of dispick.physics.bank.BankConfig and of its `prior`
+# (dispick.physics.earth.EarthPrior) can be set here.
+n_models: 50000
+n_modes: 6
+seed: 0
