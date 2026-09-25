@@ -1,23 +1,28 @@
-# Training on a multi-GPU cloud machine: one process per GPU,
-#   torchrun --nproc-per-node=gpu -m dispick.cli train --config configs/train_cloud.yaml
-# The batch is per GPU; the data workers per process (budget about 6 CPU cores per GPU:
-# synthesis runs on the CPUs, about 16 ms an image and core).
+# Training on a cloud GPU machine, started by scripts/cloud_train.sh (see docs/cloud.md), which
+# sets the output and data paths. One process per GPU; the batch and the data workers are per
+# process. The images are synthesized on the CPUs while the GPU trains (about 35 ms of one core
+# per image): give each GPU 12 or more cores, e.g. g6.4xlarge / g5.4xlarge (AWS) or
+# g2-standard-16 (GCP) for one GPU. On a 4-GPU, 48-core machine: --set data.workers=10.
 output: ../runs/cloud
 data:
   bank: ../data/bank.h5
   validation: ../data/validation.h5
   grid: [256, 256]
   batch_size: 48
-  workers: 6
+  workers: 12
+  prefetch_factor: 4
 network:
   widths: [32, 64, 128, 256, 384]
+  attention_layers: 2
+  attention_heads: 8
   n_modes: 1
 optim:
   lr: 0.0015
-  steps: 150000
-  warmup_steps: 3000
+  steps: 60000  # 2.9 M images; about 3 to 4 h on one L4 or A10G
+  warmup_steps: 2000
 runtime:
   device: auto
   precision: auto
+  log_every: 100
   validate_every: 2500
   checkpoint_every: 2500

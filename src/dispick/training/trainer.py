@@ -57,6 +57,8 @@ class Runtime:
 
 
 def setup_runtime(config: RuntimeConfig) -> Runtime:
+    if config.threads is not None:
+        torch.set_num_threads(config.threads)
     world = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -118,8 +120,22 @@ def parameter_groups(model: nn.Module, weight_decay: float) -> list[dict[str, An
     ]
 
 
+def _share_through_files_if_shm_is_small(minimum: int = 1 << 30) -> None:
+    """Data workers hand batches over through /dev/shm; some containers give it 64 MB, not
+    enough: share through files instead."""
+    try:
+        stats = os.statvfs("/dev/shm")
+    except OSError:
+        return
+    if stats.f_bavail * stats.f_frsize < minimum:
+        torch.multiprocessing.set_sharing_strategy("file_system")
+        logger.warning("/dev/shm is small: data workers share batches through files")
+
+
 def train_loader(config: TrainConfig, runtime: Runtime, restart: int) -> DataLoader[Batch]:
     data = config.data
+    if data.workers:
+        _share_through_files_if_shm_is_small()
     grid = CanonicalGrid(*data.grid)
     pin = runtime.device.type == "cuda"
     if data.source == "online":
@@ -166,8 +182,15 @@ def train_loader(config: TrainConfig, runtime: Runtime, restart: int) -> DataLoa
 def validation_loader(config: TrainConfig) -> DataLoader[Batch] | None:
     if config.data.validation is None:
         return None
+    dataset = ShardDataset(config.data.validation)
+    grid = "x".join(str(size) for size in config.data.grid)
+    if dataset.shard.attrs.get("grid", grid) != grid:
+        raise ValueError(
+            f"validation shard {config.data.validation} is on a {dataset.shard.attrs['grid']} "
+            f"grid, the network on {grid}: rebuild it with --grid {grid.replace('x', ' ')}"
+        )
     return DataLoader(
-        ShardDataset(config.data.validation),
+        dataset,
         batch_size=config.data.batch_size,
         num_workers=min(config.data.workers, 4),
         worker_init_fn=worker_init,
@@ -330,8 +353,8 @@ def train(config: TrainConfig, resume: bool = True) -> Path:
             count = running.pop("count")
             record = {key: value / count for key, value in running.items()}
             record |= {
-                "step": step,
-                "lr": scheduler.get_last_lr()[0],
+                "step": float(step),
+                "lr": float(scheduler.get_last_lr()[0]),
                 "images_per_s": seen / elapsed,
             }
             _write(log, writer, "train", record)
@@ -347,7 +370,7 @@ def train(config: TrainConfig, resume: bool = True) -> Path:
             summary = validate(
                 ema.model, validation, config, runtime, config.runtime.validation_batches
             )
-            _write(log, writer, "validation", summary | {"step": step})
+            _write(log, writer, "validation", summary | {"step": float(step)})
             logger.info(
                 "validation at %d: score %.4f  precision %.4f  recall %.4f  acc@5%% %.4f  "
                 "mode confusion %.4f  pickable F1 %.4f",

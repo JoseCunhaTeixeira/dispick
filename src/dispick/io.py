@@ -45,27 +45,40 @@ class ImageFile:
         return Geometry(n_receivers=len(self.receivers), spacing=float(np.median(steps)))
 
 
-def read_image(path: Path) -> ImageFile:
-    def text(file: h5py.File, key: str) -> str:
-        if key not in file:
-            return ""
-        value = file[key][()]  # pyright: ignore[reportIndexIssue]
-        return value.decode() if isinstance(value, bytes) else str(value)
+def _array(file: h5py.File, key: str, dtype: type = np.float64) -> np.ndarray | None:
+    obj = file.get(key)
+    return np.asarray(obj[()], dtype=dtype) if isinstance(obj, h5py.Dataset) else None
 
+
+def _text(file: h5py.File, key: str) -> str:
+    obj = file.get(key)
+    if not isinstance(obj, h5py.Dataset):
+        return ""
+    value = obj[()]
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def read_image(path: Path) -> ImageFile:
     with h5py.File(path, "r") as file:
-        receivers = (
-            np.asarray(file["receivers"][:], dtype=np.float64) if "receivers" in file else None
-        )  # pyright: ignore[reportIndexIssue]
-        source = tuple(float(x) for x in file["source"][:]) if "source" in file else None  # pyright: ignore[reportIndexIssue]
+        fv_map = _array(file, "fv_map", np.float32)
+        frequencies = _array(file, "fs")
+        velocities = _array(file, "vs")
+        if fv_map is None or frequencies is None or velocities is None:
+            raise ValueError(f"{path}: not a sigpipe dispersion image (fv_map, fs, vs)")
+        source = _array(file, "source")
         return ImageFile(
             path=Path(path),
-            fv_map=np.asarray(file["fv_map"][:], dtype=np.float32),  # pyright: ignore[reportIndexIssue]
-            frequencies=np.asarray(file["fs"][:], dtype=np.float64),  # pyright: ignore[reportIndexIssue]
-            velocities=np.asarray(file["vs"][:], dtype=np.float64),  # pyright: ignore[reportIndexIssue]
-            velocity_type=text(file, "type"),
-            source=source if source is not None and len(source) == 3 else None,  # pyright: ignore[reportArgumentType]
-            receivers=receivers,
-            acquisition_kind=text(file, "acquisition_kind"),
+            fv_map=fv_map,
+            frequencies=frequencies,
+            velocities=velocities,
+            velocity_type=_text(file, "type"),
+            source=(
+                (float(source[0]), float(source[1]), float(source[2]))
+                if source is not None and source.size == 3
+                else None
+            ),
+            receivers=_array(file, "receivers"),
+            acquisition_kind=_text(file, "acquisition_kind"),
         )
 
 
@@ -103,6 +116,39 @@ def write_curve_csv(image: ImageFile, result: PickResult, path: Path, label: str
     ]
     path.write_text("\n".join(lines) + "\n\n---\n\n")
     return path
+
+
+def read_curves_csv(path: Path) -> list[tuple[str, np.ndarray, np.ndarray]]:
+    """The curves of a sigpipe curve file: (mode label, frequencies, velocities) per block."""
+    curves = []
+    for block in path.read_text().split("---"):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        label, rows, started = "", [], False
+        for line in lines:
+            if line.startswith("mode:"):
+                wave, _, number = line.removeprefix("mode:").strip(" ()").partition(",")
+                label = wave.strip(" '\"") + number.strip()
+            elif line.startswith("frequency_Hz"):
+                started = True
+            elif started:
+                rows.append([float(x) for x in line.split(",")[:2]])
+        if rows:
+            table = np.asarray(rows)
+            curves.append((label, table[:, 0], table[:, 1]))
+    return curves
+
+
+def existing_m0(image_path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """The M0 curve already picked next to an image (PAC/PACo's DispersionCurves_0000.csv
+    in the window's folder), if any."""
+    path = image_path.with_name(image_path.name.replace("DispersionImage", "DispersionCurves"))
+    path = path.with_suffix(".csv")
+    if not path.exists():
+        return None
+    for label, fs, vs in read_curves_csv(path):
+        if label in ("M0", "R0"):
+            return fs, vs
+    return None
 
 
 def _name(path: Path) -> str:
@@ -149,4 +195,5 @@ def pick_files(
             results,
             out / "picks.png",
             titles=[_name(i.path) for i in images],
+            references=[existing_m0(i.path) for i in images],
         )

@@ -80,7 +80,8 @@ class WavefieldPrior(_Section):
     mode_ripple: Range = (0.0, 0.5)  # std of a smooth log-amplitude drift along frequency
     q: Range = (5.0, 100.0)  # quality factor, log-uniform
     passive_plane_waves: tuple[int, int] = (3, 24)  # uniform
-    passive_spread: Range = (0.0, 60.0)  # std of the arrival azimuths, degrees, uniform
+    # std of the arrival azimuths, degrees, uniform (PAC keeps mostly endfire sources)
+    passive_spread: Range = (0.0, 45.0)
     passive_backward: Range = (0.0, 0.5)  # share of plane waves from the far side, uniform
     passive_diffuse_probability: float = Field(default=0.3, ge=0, le=1)  # cylindrical, not plane
     heterogeneity_probability: float = Field(default=0.15, ge=0, le=1)

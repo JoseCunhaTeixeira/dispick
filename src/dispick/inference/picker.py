@@ -102,15 +102,15 @@ class Picker:
         ]
         if not settings.zoom:
             return results
-        zooms = [_zoom_ranges(image, result) for image, result in zip(images, results, strict=True)]
-        todo = [i for i, ranges in enumerate(zooms) if ranges is not None]
+        todo = [
+            (i, ranges)
+            for i, (image, result) in enumerate(zip(images, results, strict=True))
+            if (ranges := _zoom_ranges(image, result)) is not None
+        ]
         if not todo:
             return results
-        second = self._run(
-            [self._canonical(images[i], *zooms[i]) for i in todo],  # pyright: ignore[reportCallIssue]
-            settings,
-        )
-        for i, pass_ in zip(todo, second, strict=True):
+        second = self._run([self._canonical(images[i], *ranges) for i, ranges in todo], settings)
+        for (i, _), pass_ in zip(todo, second, strict=True):
             results[i] = self._result(images[i], [first[i], pass_], settings)
         return results
 

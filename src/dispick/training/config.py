@@ -51,6 +51,7 @@ class RuntimeConfig(_Section):
     device: str = "auto"  # "auto": the GPU (CUDA or ROCm) when there is one
     precision: Literal["auto", "bf16", "fp16", "fp32"] = "auto"
     compile: bool = False
+    threads: int | None = Field(default=None, ge=1)  # PyTorch's CPU threads; None: its default
     seed: int = 0
     log_every: int = Field(default=50, ge=1)
     validate_every: int = Field(default=2_000, ge=1)

@@ -15,9 +15,11 @@ def plot_picks(
     titles: Sequence[str] | None = None,
     truths: Sequence[np.ndarray | None] | None = None,
     columns: int = 4,
+    references: Sequence[tuple[np.ndarray, np.ndarray] | None] | None = None,
 ) -> Path:
     """A grid of (fv_map, frequencies, velocities) images with each result's picked points
-    (coloured by presence) and the remaining estimate (grey), over the truth when given."""
+    (coloured by presence) and the remaining estimate (grey), over the truth (white line) or a
+    reference pick (white dots, e.g. an earlier picker's) when given."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -45,6 +47,9 @@ def plot_picks(
         truth = truths[k] if truths is not None else None
         if truth is not None:
             ax.plot(fs, truth, color="white", lw=1.2, label="M0 (true)")
+        reference = references[k] if references is not None else None
+        if reference is not None:
+            ax.plot(reference[0], reference[1], "o", mfc="none", mec="white", ms=3, mew=0.7)
         rest = ~result.picked & np.isfinite(result.velocities)
         ax.plot(fs[rest], result.velocities[rest], ".", color="0.6", ms=2)
         f, v, e = result.curve

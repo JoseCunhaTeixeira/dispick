@@ -11,7 +11,7 @@ stiff crust or a strong bedrock contrast.
 """
 
 import numpy as np
-from disba import DispersionError, EigenFunction
+from disba import DispersionError, EigenFunction, RayleighEigen
 
 from dispick.physics.dispersion import NormalizedModel
 
@@ -94,6 +94,8 @@ def vertical_excitation(
             try:
                 eigen = engine(1.0 / f, mode=mode, wave="rayleigh")
             except DispersionError:
+                continue
+            if not isinstance(eigen, RayleighEigen):
                 continue
             energy = _energy(eigen.ur, eigen.uz, thickness, rho_layers, vs_layers, phase, f)
             if np.isfinite(energy) and energy > 0 and eigen.uz.size:

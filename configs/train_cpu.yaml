@@ -1,0 +1,24 @@
+# A small model trained on a CPU in a few hours: a working interim model, weaker than the
+# GPU one (a 128 x 128 grid, 2 M parameters, about 190 000 images).
+output: ../runs/cpu
+data:
+  bank: ../data/bank.h5
+  validation: ../data/validation_128.h5
+  grid: [128, 128]
+  batch_size: 24
+  workers: 5
+  prefetch_factor: 2
+network:
+  widths: [16, 32, 64, 128, 192]
+  attention_layers: 2
+  attention_heads: 4
+optim:
+  lr: 0.002
+  steps: 8000
+  warmup_steps: 300
+runtime:
+  device: cpu
+  threads: 6
+  log_every: 50
+  validate_every: 1000
+  checkpoint_every: 500

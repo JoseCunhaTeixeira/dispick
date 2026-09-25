@@ -13,6 +13,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -141,7 +142,9 @@ def summarize(scores: Iterable[ImageScore]) -> dict[str, float]:
         probability = np.array([p for p, _ in verdicts], dtype=float)
         label = np.array([t for _, t in verdicts], dtype=bool)
         said = probability >= 0.5
-        tp, fp, fn = (said & label).sum(), (said & ~label).sum(), (~said & label).sum()
+        tp = float((said & label).sum())
+        fp = float((said & ~label).sum())
+        fn = float((~said & label).sum())
         out |= {
             "pickable_accuracy": float(np.mean(said == label)),
             "pickable_f1": ratio(2 * tp, 2 * tp + fp + fn),
@@ -149,10 +152,10 @@ def summarize(scores: Iterable[ImageScore]) -> dict[str, float]:
             "pickable_brier": float(np.mean((probability - label) ** 2)),
             "unpickable_rejected": ratio(float((~said & ~label).sum()), float((~label).sum())),
         }
-        quality = [(s.quality, s.quality_label) for s in scores if s.quality is not None]
-        out["quality_mae"] = float(np.mean([abs(q - t) for q, t in quality]))  # pyright: ignore[reportOperatorIssue]
-        share = [(s.share, s.share_label) for s in scores if s.share is not None]
-        out["share_mae"] = float(np.mean([abs(q - t) for q, t in share]))  # pyright: ignore[reportOperatorIssue]
+        quality = [abs(s.quality - s.quality_label) for s in scores if s.quality is not None]
+        out["quality_mae"] = float(np.mean(quality)) if quality else math.nan
+        share = [abs(s.share - s.share_label) for s in scores if s.share is not None]
+        out["share_mae"] = float(np.mean(share)) if share else math.nan
     return out
 
 
@@ -205,6 +208,31 @@ def picker_method(picker: Picker, settings: PickSettings | None = None) -> Metho
     return run
 
 
+def precomputed_method(path: Path) -> Method:
+    """Picks made elsewhere (another tool's picker), stored per benchmark image as `v_<index>`
+    (velocity at each of the image's frequencies, NaN where none) and `k_<index>` (picked), in
+    the benchmark's order."""
+    arrays = np.load(path)
+    cursor = 0
+
+    def run(samples: list[SyntheticSample]) -> list[Pick]:
+        nonlocal cursor
+        picks = []
+        for sample in samples:
+            velocities = np.asarray(arrays[f"v_{cursor:06d}"], dtype=np.float64)
+            if velocities.shape != sample.frequencies.shape:
+                raise ValueError(f"{path}: image {cursor} does not match the benchmark")
+            picks.append(
+                Pick(
+                    velocities=velocities, picked=np.asarray(arrays[f"k_{cursor:06d}"], dtype=bool)
+                )
+            )
+            cursor += 1
+        return picks
+
+    return run
+
+
 def evaluate(
     samples: Iterable[SyntheticSample], methods: dict[str, Method], chunk: int = 64
 ) -> dict[str, list[ImageScore]]:
@@ -226,27 +254,34 @@ def evaluate(
     return scores
 
 
-def write_report(scores: dict[str, list[ImageScore]], folder: Path) -> dict[str, object]:
+def write_report(scores: dict[str, list[ImageScore]], folder: Path) -> dict[str, dict[str, object]]:
     folder.mkdir(parents=True, exist_ok=True)
     reports = {name: report(values) for name, values in scores.items()}
-    (folder / "report.json").write_text(json.dumps(reports, indent=2, default=_json))
+    (folder / "report.json").write_text(json.dumps(_clean(reports), indent=2, allow_nan=False))
     with (folder / "images.jsonl").open("w") as file:
         for name, values in scores.items():
             for index, value in enumerate(values):
                 file.write(
-                    json.dumps({"method": name, "index": index} | asdict(value), default=_json)
+                    json.dumps(
+                        _clean({"method": name, "index": index} | asdict(value)), allow_nan=False
+                    )
                     + "\n"
                 )
     (folder / "report.md").write_text(markdown(reports))
     return reports
 
 
-def _json(value: object) -> object:
-    if isinstance(value, float | np.floating) and not math.isfinite(float(value)):
-        return None
+def _clean(value: object) -> object:
+    """The value as strict JSON: NaN and infinities as null, numpy scalars as numbers."""
+    if isinstance(value, dict):
+        return {str(key): _clean(item) for key, item in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list | tuple):
+        return [_clean(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, np.generic):
-        return value.item()
-    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def markdown(reports: dict[str, dict[str, object]]) -> str:
@@ -261,23 +296,25 @@ def markdown(reports: dict[str, dict[str, object]]) -> str:
     )
     lines = ["# dispick benchmark", ""]
     names = list(reports)
-    sections = ["overall", *[k for k in reports[names[0]] if k != "overall"]] if names else []
+    if not names:
+        return "\n".join(lines)
+    sections = ["overall", *[key for key in reports[names[0]] if key != "overall"]]
     for section in sections:
         lines += [f"## {section}", "", "| method | group | images | " + " | ".join(columns) + " |"]
         lines.append("|---" * (3 + len(columns)) + "|")
         for name in names:
-            groups = reports[name][section]
-            items = [("all", groups)] if section == "overall" else list(groups.items())  # pyright: ignore[reportAttributeAccessIssue]
+            groups = cast(dict[str, Any], reports[name][section])
+            items = [("all", groups)] if section == "overall" else list(groups.items())
             for group, values in items:
-                cells = [_cell(values.get(c)) for c in columns]  # pyright: ignore[reportAttributeAccessIssue]
+                cells = [_cell(values.get(column)) for column in columns]
                 lines.append(
                     f"| {name} | {group} | {int(values['images'])} | " + " | ".join(cells) + " |"
-                )  # pyright: ignore[reportIndexIssue]
+                )
         lines.append("")
     return "\n".join(lines)
 
 
 def _cell(value: object) -> str:
-    if value is None or (isinstance(value, float) and not math.isfinite(value)):
+    if not isinstance(value, int | float) or not math.isfinite(value):
         return "-"
-    return f"{float(value):.3f}"  # pyright: ignore[reportArgumentType]
+    return f"{float(value):.3f}"

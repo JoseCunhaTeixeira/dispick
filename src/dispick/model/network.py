@@ -134,7 +134,9 @@ class DispersionNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         factor = self.config.downsampling
-        if x.shape[-2] % factor or x.shape[-1] % factor:
+        if not torch.jit.is_tracing() and (  # pyright: ignore[reportPrivateImportUsage]
+            x.shape[-2] % factor or x.shape[-1] % factor
+        ):
             raise ValueError(
                 f"the grid {tuple(x.shape[-2:])} must be divisible by {factor} along both axes"
             )

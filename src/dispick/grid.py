@@ -82,9 +82,12 @@ def resampling_matrix(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     target = check_axis(target, "target axis")
     source_step = float(np.median(np.diff(source)))
     target_step = float(target[1] - target[0])
-    width = max(source_step, target_step)
     clipped = np.clip(target, source[0], source[-1])
-    weights = np.maximum(0.0, 1.0 - np.abs(source[None, :] - clipped[:, None]) / width)
+    # Near the axis's ends the tent shrinks to stay symmetric (down to plain linear
+    # interpolation at the ends): a one-sided average would bias the edge cells.
+    room = np.minimum(clipped - source[0], source[-1] - clipped)
+    width = np.maximum(source_step, np.minimum(max(source_step, target_step), room))
+    weights = np.maximum(0.0, 1.0 - np.abs(source[None, :] - clipped[:, None]) / width[:, None])
     totals = weights.sum(axis=1, keepdims=True)
     # A target between two sources farther apart than `width` (an irregular source axis):
     # interpolate between its neighbours instead.

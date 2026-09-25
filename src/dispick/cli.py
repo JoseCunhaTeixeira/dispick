@@ -129,7 +129,12 @@ def _export(args: argparse.Namespace) -> None:
 def _evaluate(args: argparse.Namespace) -> None:
     from dispick.data.shards import read_benchmark
     from dispick.evaluation.baselines import maximum_method
-    from dispick.evaluation.benchmark import Method, picker_method, write_report
+    from dispick.evaluation.benchmark import (
+        Method,
+        picker_method,
+        precomputed_method,
+        write_report,
+    )
     from dispick.evaluation.benchmark import evaluate as run
     from dispick.inference.picker import Picker, PickSettings
 
@@ -139,6 +144,9 @@ def _evaluate(args: argparse.Namespace) -> None:
     }
     if args.baselines:
         methods["maximum"] = maximum_method
+    for item in args.external or []:
+        name, _, path = item.partition("=")
+        methods[name] = precomputed_method(Path(path))
     samples = list(read_benchmark(args.benchmark))
     if args.limit:
         samples = samples[: args.limit]
@@ -208,6 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--threshold", type=float, default=0.5)
     evaluate.add_argument("--zoom", action="store_true")
     evaluate.add_argument("--baselines", action="store_true")
+    evaluate.add_argument(
+        "--external", action="append", metavar="NAME=PICKS.npz", help="picks made elsewhere"
+    )
     evaluate.add_argument("--limit", type=int)
     evaluate.add_argument("--device", default="cpu")
     evaluate.set_defaults(run=_evaluate)

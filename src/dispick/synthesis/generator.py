@@ -124,7 +124,8 @@ class SyntheticGenerator:
                 ),
                 contrast=log_uniform(rng, config.wavefield.heterogeneity_contrast),
             )
-        # What the phase shift reads is the ground's average along the array.
+        # The records follow the ground under the array's first part (and the change past the
+        # split); the truth is what the phase shift reads, the ground's average along the array.
         factor = heterogeneity.factor(array.offsets) if heterogeneity is not None else 1.0
 
         def curves(frequencies: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -136,6 +137,7 @@ class SyntheticGenerator:
         c_image = np.full((entry.n_modes, frequencies.size), np.nan)
         a_image = np.zeros((entry.n_modes, frequencies.size))
         c_image[:, positive], a_image[:, positive] = curves(frequencies[positive])
+        c_first = c_image / factor
         velocities = self._velocities(c_image[0], frequencies, geometry, scenario, rng)
 
         events: list[str] = []
@@ -149,9 +151,9 @@ class SyntheticGenerator:
             "heterogeneity": int(heterogeneity is not None),
         }
         # Body waves cross the array at the layers' P and (refracted) S velocities.
-        body = np.concatenate([entry.model.vp, entry.model.vs[1:]]) * velocity_scale * factor
+        body = np.concatenate([entry.model.vp, entry.model.vs[1:]]) * velocity_scale
         image = self._image(
-            array, frequencies, velocities, c_image, a_image, body, scenario, heterogeneity,
+            array, frequencies, velocities, c_first, a_image, body, scenario, heterogeneity,
             rng, events, info,
         )  # fmt: skip
         info["events"] = ",".join(sorted(set(events)))
