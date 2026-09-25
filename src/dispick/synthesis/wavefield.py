@@ -67,13 +67,20 @@ def surface_waves(
     """(N, n_f) complex spectra of the modes at `offsets` (m, the true ones)."""
     r = np.asarray(offsets, dtype=np.float64)[:, None]
     f = np.asarray(frequencies, dtype=np.float64)[None, :]
+    # Slowness-weighted distance from the source: where the ground changes, the waves slow
+    # down (or speed up) past the split, whichever way they cross the array.
+    path = r
+    if heterogeneity is not None:
+        path = r + (heterogeneity.contrast - 1.0) * np.maximum(0.0, r - heterogeneity.split)
     diffuse = kind == "active" or rng.random() < prior.passive_diffuse_probability
+    cosines = strengths = np.zeros(0)
     if not diffuse:
         count = int(rng.integers(prior.passive_plane_waves[0], prior.passive_plane_waves[1] + 1))
         spread = np.deg2rad(rng.uniform(*prior.passive_spread))
         azimuths = rng.normal(0.0, spread, count)
         backward = rng.random(count) < rng.uniform(*prior.passive_backward)
         azimuths[backward] += np.pi
+        cosines = np.cos(azimuths)
         strengths = rng.lognormal(0.0, 0.5, count)
         strengths /= np.sqrt(np.sum(strengths**2))
     total = np.zeros((r.shape[0], f.shape[1]), dtype=np.complex128)
@@ -88,15 +95,12 @@ def surface_waves(
         if diffuse:
             kr = np.maximum(k * r, 1e-9)
             wave = np.where(r > 0, hankel2(kr), 0.0)
+            if heterogeneity is not None:
+                wave = wave * np.exp(-1j * k * (path - r))
         else:
-            cosines = np.cos(azimuths)  # pyright: ignore[reportPossiblyUnboundVariable]
             wave = np.zeros_like(total)
-            for cosine, strength in zip(cosines, strengths, strict=True):  # pyright: ignore[reportPossiblyUnboundVariable]
-                wave += strength * np.exp(-1j * k * r * cosine)
-        if heterogeneity is not None:
-            wave = wave * np.exp(
-                -1j * k * (heterogeneity.contrast - 1.0) * np.maximum(0.0, r - heterogeneity.split)
-            )
+            for cosine, strength in zip(cosines, strengths, strict=True):
+                wave += strength * np.exp(-1j * k * path * cosine)
         attenuation = np.exp(-np.pi * f * r / (modes.q[mode] * c))
         total += np.where(valid, weight * attenuation * wave, 0.0)
     return total
@@ -205,6 +209,15 @@ def coherent_noise(
         total += back * (log_uniform(rng, prior.backward_ratio) * rms / signal_rms(back))[None, :]
         events.append("backward")
     return total
+
+
+def dc_values(n_traces: int, rng: np.random.Generator) -> np.ndarray:
+    """The records' 0 Hz values. sigpipe's DC bin is real, so once each trace is normalized only
+    its sign is left, and the 0 Hz column is |sum of signs| / N at every velocity: 0 for
+    records demeaned exactly, up to 1 when they share an offset."""
+    if rng.random() < 0.3:
+        return np.zeros(n_traces)
+    return rng.normal() * rng.uniform(0.0, 3.0) + rng.normal(size=n_traces)
 
 
 def random_noise(

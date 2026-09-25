@@ -120,22 +120,26 @@ def parameter_groups(model: nn.Module, weight_decay: float) -> list[dict[str, An
     ]
 
 
-def _share_through_files_if_shm_is_small(minimum: int = 1 << 30) -> None:
-    """Data workers hand batches over through /dev/shm; some containers give it 64 MB, not
-    enough: share through files instead."""
+def _warn_if_shm_is_small(minimum: int = 1 << 30) -> None:
+    """Data workers hand batches over through /dev/shm, which some containers keep at 64 MB:
+    say so before the workers fail (docker run --shm-size=16g)."""
     try:
         stats = os.statvfs("/dev/shm")
     except OSError:
         return
-    if stats.f_bavail * stats.f_frsize < minimum:
-        torch.multiprocessing.set_sharing_strategy("file_system")
-        logger.warning("/dev/shm is small: data workers share batches through files")
+    available = stats.f_bavail * stats.f_frsize
+    if available < minimum:
+        logger.warning(
+            "/dev/shm has %d MB free: data workers may fail; give the container more "
+            "(docker run --shm-size=16g) or set data.workers to 0",
+            available >> 20,
+        )
 
 
 def train_loader(config: TrainConfig, runtime: Runtime, restart: int) -> DataLoader[Batch]:
     data = config.data
     if data.workers:
-        _share_through_files_if_shm_is_small()
+        _warn_if_shm_is_small()
     grid = CanonicalGrid(*data.grid)
     pin = runtime.device.type == "cuda"
     if data.source == "online":
@@ -148,6 +152,7 @@ def train_loader(config: TrainConfig, runtime: Runtime, restart: int) -> DataLoa
             geometry_dropout=data.geometry_dropout,
             restart=restart,
             bank_in_memory=data.bank_in_memory,
+            rank=runtime.rank,
         )
         return DataLoader(
             dataset,
@@ -332,7 +337,12 @@ def train(config: TrainConfig, resume: bool = True) -> Path:
             outputs = network(batch["inputs"])
         loss, parts = picking_loss(outputs, batch, config.loss)
         optimizer.zero_grad(set_to_none=True)
-        if not torch.isfinite(loss):
+        # Every process skips together: one skipping alone would pair its next gradient
+        # all-reduce with the others' current one.
+        finite = torch.isfinite(loss.detach()).float()
+        if runtime.world > 1:
+            torch.distributed.all_reduce(finite, op=torch.distributed.ReduceOp.MIN)
+        if finite.item() < 1:
             logger.warning("step %d: non-finite loss %s, skipped", step, float(loss))
             continue
         scaler.scale(loss).backward()

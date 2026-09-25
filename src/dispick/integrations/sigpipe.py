@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from dispick.features import Geometry
+from dispick.features import Geometry, geometry_from_receivers
 from dispick.inference.picker import Picker, PickSettings
 from dispick.inference.result import ImageAssessment, PickResult
 
@@ -39,17 +39,13 @@ def _picker(model: str | None) -> Picker:
 
 def geometry_of(acquisition: Acquisition) -> Geometry | None:
     """The receiver count and spacing of a known acquisition (None when unknown)."""
-    if acquisition.is_unknown or len(acquisition.receivers) < 2:
+    receivers = acquisition.receivers
+    if len(receivers) < 2 or any(receiver.is_unknown for receiver in receivers):
         return None
-    try:
-        positions = np.asarray(acquisition.offsets, dtype=np.float64)
-    except NotImplementedError:
-        positions = np.array([receiver.x for receiver in acquisition.receivers], dtype=np.float64)
-    positions = np.sort(positions)
-    steps = np.diff(positions)
-    if not np.any(steps > 0):
-        return None
-    return Geometry(n_receivers=len(acquisition.receivers), spacing=float(np.median(steps)))
+    return geometry_from_receivers(
+        np.array([receiver.x for receiver in receivers]),
+        np.array([receiver.z for receiver in receivers]),
+    )
 
 
 def pick_image(

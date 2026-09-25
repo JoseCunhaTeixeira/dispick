@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from dispick.features import Geometry, input_channels
-from dispick.grid import CanonicalAxes, CanonicalGrid, to_canonical
+from dispick.grid import CanonicalAxes, CanonicalGrid, frequency_weights, to_canonical
 from dispick.synthesis.sample import SyntheticSample
 
 
@@ -36,22 +36,24 @@ class TrainingExample:
 
 
 def make_example(sample: SyntheticSample, grid: CanonicalGrid, n_modes: int) -> TrainingExample:
-    """The sample resampled onto `grid`, with the targets of its first `n_modes` modes."""
+    """The sample resampled onto `grid`, with the targets of its first `n_modes` modes.
+
+    The targets are made of the image's own columns, weighted as the canonical rows are: a
+    row copying a column (a coarse image) gets that column's velocity and label, a row
+    averaging several (a fine image) their average velocity and their majority label. So a
+    target always sits on the ridge the row shows."""
     image, axes = to_canonical(sample.fv_map, sample.frequencies, sample.velocities, grid)
-    curves = np.full((n_modes, grid.n_frequencies), np.nan)
-    known = sample.curves_at(axes.frequencies)
-    count = min(n_modes, known.shape[0])
-    curves[:count] = known[:count]
-    bins = axes.bin_of_velocity(curves)
+    weights = frequency_weights(sample.frequencies, axes)  # (F, n_f)
+    curves = np.full((n_modes, sample.frequencies.size), np.nan)
+    count = min(n_modes, sample.curves.shape[0])
+    curves[:count] = sample.curves[:count]
+    missing = weights @ (~np.isfinite(curves)).T.astype(np.float64) > 0  # (F, n_modes)
+    rows = weights @ np.nan_to_num(curves, nan=0.0).T
+    rows[missing] = np.nan
+    bins = axes.bin_of_velocity(rows.T)
     bins[~((bins >= 0) & (bins <= grid.n_velocities - 1))] = np.nan
-    # Each canonical frequency takes the label of the nearest column of the image.
-    nearest = np.clip(
-        np.searchsorted(sample.frequencies, axes.frequencies), 1, sample.frequencies.size - 1
-    )
-    left = sample.frequencies[nearest - 1]
-    right = sample.frequencies[nearest]
-    nearest = np.where(axes.frequencies - left <= right - axes.frequencies, nearest - 1, nearest)
-    presence = sample.visible[nearest] & np.isfinite(bins[0]) & (axes.frequencies > 0)
+    presence = (weights @ sample.visible.astype(np.float64) >= 0.5) & np.isfinite(bins[0])
+    presence &= axes.frequencies > 0
     return TrainingExample(
         image=image,
         f_range=axes.f_range,

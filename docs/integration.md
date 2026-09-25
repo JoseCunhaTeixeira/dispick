@@ -88,8 +88,10 @@ PACo's agent cannot see images: it reads the gates' summaries. dispick gives the
 things the classical tracker could not: a calibrated verdict on each image, and a presence
 probability per point.
 
-**The picker.** `paco.picking.pick_modes` returns `PickedMode`s; a dispick version fills the
-same fields, so G3 and G4 judge it unchanged:
+**The picker.** PACo processes windows in parallel (`PACO_WORKERS`): each worker should
+load its own picker with one thread, `Picker.load(threads=1)`, and pass it as `picker=` (an
+ONNX session otherwise takes every core). `paco.picking.pick_modes` returns `PickedMode`s; a
+dispick version fills the same fields, so G3 and G4 judge it unchanged:
 
 ```python
 import numpy as np

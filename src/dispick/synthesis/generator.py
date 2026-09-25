@@ -24,6 +24,7 @@ from dispick.synthesis.wavefield import (
     Heterogeneity,
     Modes,
     coherent_noise,
+    dc_values,
     random_noise,
     signal_rms,
     snr_profile,
@@ -160,18 +161,23 @@ class SyntheticGenerator:
         info["n_frequencies"] = int(frequencies.size)
         info["n_velocities"] = int(velocities.size)
 
+        dense = self._dense_frequencies(frequencies)
+        dense_curves, _ = curves(dense)
         if scenario in ("noise_only", "coherent_only"):
+            # No surface waves in the records: no curve is there to find, nor to learn.
+            c_image = np.full_like(c_image, np.nan)
+            dense_curves = np.full_like(dense_curves, np.nan)
             visible = np.zeros(frequencies.size, dtype=bool)
             labels = ImageLabels(pickable=False, quality=0.0, higher_mode_share=0.0)
         else:
+            # The phase shift weighs out a zero-offset trace (a passive virtual source's).
+            traces = int(np.count_nonzero(array.offsets > 0))
             visible = m0_visibility(
-                image, frequencies, velocities, c_image[0], geometry, config.labels
+                image, frequencies, velocities, c_image[0], geometry, config.labels, traces
             )
             labels = image_labels(
                 image, frequencies, velocities, c_image, visible, geometry, config.labels
             )
-        dense = self._dense_frequencies(frequencies)
-        dense_curves, _ = curves(dense)
         return SyntheticSample(
             fv_map=image,
             frequencies=frequencies,
@@ -360,6 +366,8 @@ class SyntheticGenerator:
                     )  # fmt: skip
             noise = random_noise(rms, snr, n, rng)
             records = defects.apply(signal + coherent + noise, frequencies, rms, rng)
+            if frequencies[0] == 0:
+                records[:, 0] = dc_values(n, rng)
             images.append(phase_shift(records, frequencies, array.offsets, velocities))
         return np.mean(images, axis=0).astype(np.float32)
 

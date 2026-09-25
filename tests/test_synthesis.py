@@ -108,9 +108,11 @@ def test_visibility_ignores_a_curve_off_the_ridge() -> None:
 def test_runs_and_cleaning() -> None:
     mask = np.array([0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=bool)
     assert runs(mask) == [(1, 2), (4, 6), (10, 10)]
-    cleaned = clean_runs(mask, LabelConfig(min_run=3, gap=0.05))
-    # The one-column gap is closed, the lone column dropped.
-    assert runs(cleaned) == [(1, 6)]
+    # Short stretches go first (they would otherwise chain into a long one), then gaps close.
+    config = LabelConfig(min_run=3, gap=1)
+    assert runs(clean_runs(mask, config)) == [(4, 6)]
+    two = np.array([1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1] + [0] * 8, dtype=bool)
+    assert runs(clean_runs(two, config)) == [(0, 6), (9, 11)]
 
 
 def test_make_example_targets(generator: SyntheticGenerator) -> None:
@@ -171,3 +173,110 @@ def test_heterogeneity_ridge_sits_on_the_effective_velocity() -> None:
     ridge = velocities[np.argmax(image, axis=1)]
     expected = 300.0 * heterogeneity.factor(offsets)
     assert np.allclose(ridge, expected, rtol=0.01)
+
+
+def test_random_images_have_no_pickable_m0() -> None:
+    """Random phases put peaks everywhere; some fall near any curve by chance, and must not
+    become a pickable stretch (review finding: bridging before dropping chained them)."""
+    rng = np.random.default_rng(4)
+    frequencies = np.linspace(1, 100, 600)
+    velocities = np.linspace(10, 1000, 400)
+    c0 = 150 + 400 * np.exp(-frequencies / 20)
+    for n in (12, 24, 48):
+        offsets = 1.0 + np.arange(n) * 1.0
+        spectra = rng.standard_normal((n, 600)) + 1j * rng.standard_normal((n, 600))
+        image = phase_shift(spectra, frequencies, offsets, velocities)
+        geometry = Geometry(n, 1.0)
+        visible = m0_visibility(image, frequencies, velocities, c0, geometry, LabelConfig())
+        assert visible.mean() < 0.01
+        labels = image_labels(
+            image, frequencies, velocities, c0[None, :], visible, geometry, LabelConfig()
+        )
+        assert not labels.pickable
+
+
+def test_significance_counts_the_weighed_traces() -> None:
+    from dispick.synthesis.labels import significance
+
+    # P(|sum of N unit phasors| > h N) = exp(-N h^2): 5 % at h = sqrt(ln 20 / N).
+    assert significance(24, 24, 0.05) == pytest.approx(np.sqrt(np.log(20) / 24))
+    # A virtual source's own trace is weighed out: 23 phasors, still divided by 24.
+    assert significance(23, 24, 0.05) == pytest.approx(np.sqrt(23 * np.log(20)) / 24)
+
+
+def test_coarse_images_get_targets_on_the_ridges_they_show() -> None:
+    """With 5 columns on a 64-row grid, each row copies its nearest column and takes that
+    column's velocity (review finding: rows between columns got a velocity no ridge had)."""
+    from dispick.synthesis.sample import ImageLabels, SyntheticSample
+
+    offsets = 2.0 + np.arange(48) * 1.0
+    frequencies = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    velocities = np.linspace(50, 800, 300)
+    c0 = 150 + 500 * np.exp(-frequencies / 12)
+    spectra = np.exp(-2j * np.pi * frequencies[None, :] * offsets[:, None] / c0[None, :])
+    image = phase_shift(spectra, frequencies, offsets, velocities)
+    sample = SyntheticSample(
+        fv_map=image,
+        frequencies=frequencies,
+        velocities=velocities,
+        offsets=offsets,
+        geometry=Geometry(48, 1.0),
+        curves=c0[None, :],
+        dense_frequencies=np.geomspace(2.5, 50, 64),
+        dense_curves=(150 + 500 * np.exp(-np.geomspace(2.5, 50, 64) / 12))[None, :],
+        visible=np.ones(5, dtype=bool),
+        labels=ImageLabels(True, 1.0, 0.0),
+    )
+    example = make_example(sample, CanonicalGrid(64, 128), n_modes=1)
+    rows = np.flatnonzero(example.presence > 0)
+    assert rows.size == 64
+    ridge = np.argmax(example.image[rows], axis=1)
+    assert np.max(np.abs(ridge - example.target_bins[0, rows])) <= 1.0
+
+
+def test_images_without_surface_waves_have_no_curve_to_learn(bank: object) -> None:
+    from dispick.physics.bank import ModalBank
+    from dispick.synthesis.config import ScenarioPrior
+
+    assert isinstance(bank, ModalBank)
+    config = SynthesisConfig(scenarios=ScenarioPrior(noise_only_probability=1.0))
+    sample = SyntheticGenerator(bank, config).sample(np.random.default_rng(2))
+    assert np.isnan(sample.curves).all()
+    example = make_example(sample, CanonicalGrid(32, 32), n_modes=2)
+    assert np.isnan(example.target_bins).all()
+    assert not example.presence.any()
+
+
+def test_the_zero_hertz_column_is_real_as_in_sigpipe() -> None:
+    """sigpipe's DC bin is real: once normalized only its sign is left, and the column is
+    |sum of signs| / N at every velocity, 1 for records sharing an offset."""
+    from dispick.synthesis.wavefield import dc_values
+
+    rng = np.random.default_rng(0)
+    offsets = 1.0 + np.arange(24)
+    velocities = np.linspace(10, 500, 50)
+    shared = np.full((24, 1), 5.0) + 0.1 * rng.standard_normal((24, 1))
+    column = phase_shift(shared.astype(complex), np.array([0.0]), offsets, velocities)
+    assert np.allclose(column, 1.0, atol=1e-5)
+    values = dc_values(24, rng)
+    column = phase_shift(values[:, None].astype(complex), np.array([0.0]), offsets, velocities)
+    assert np.ptp(column) < 1e-6
+
+
+def test_passive_plane_waves_cross_the_varying_ground_along_their_direction() -> None:
+    from dispick.synthesis.config import WavefieldPrior
+    from dispick.synthesis.wavefield import Modes, surface_waves
+
+    offsets = np.arange(48) * 1.0
+    frequencies = np.linspace(10, 40, 7)
+    heterogeneity = Heterogeneity(split=20.0, contrast=1.25)
+    modes = Modes(velocities=np.full((1, 7), 300.0), amplitudes=np.ones((1, 7)), q=np.array([1e9]))
+    endfire = WavefieldPrior(
+        passive_diffuse_probability=0.0, passive_spread=(0.0, 0.0), passive_backward=(0.0, 0.0)
+    )
+    spectra = surface_waves(
+        frequencies, offsets, modes, "passive", endfire, np.random.default_rng(0), heterogeneity
+    )
+    velocities = np.linspace(150, 450, 3001)
+    ridge = velocities[np.argmax(phase_shift(spectra, frequencies, offsets, velocities), axis=1)]
+    assert np.allclose(ridge, 300.0 * heterogeneity.factor(offsets), rtol=0.01)

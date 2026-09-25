@@ -205,3 +205,20 @@ def test_cli_parses_and_reports_errors(tmp_path: Path) -> None:
                 "o",
             ]
         )
+
+
+def test_online_streams_differ_by_rank(bank_path: Path) -> None:
+    """Data workers start fresh (forkserver): the rank is fixed when the dataset is made
+    (review finding: every GPU drew the same images)."""
+    from dispick.data.datasets import OnlineDataset
+    from dispick.grid import CanonicalGrid
+
+    def first(rank: int) -> np.ndarray:
+        dataset = OnlineDataset(
+            bank_path, SynthesisConfig(), CanonicalGrid(32, 32), 2, seed=1, rank=rank
+        )
+        assert dataset.rank == rank
+        return next(iter(dataset))["inputs"].numpy()
+
+    assert not np.array_equal(first(0), first(1))
+    assert np.array_equal(first(2), first(2))

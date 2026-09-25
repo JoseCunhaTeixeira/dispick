@@ -36,7 +36,11 @@ def _rank() -> int:
 class OnlineDataset(IterableDataset[Batch]):
     """Fresh synthetic images forever. Each (seed, restart, rank, worker) draws its own
     stream, so processes never repeat each other and a resumed run does not replay the
-    images it already saw."""
+    images it already saw.
+
+    The rank is read when the dataset is made, in the training process: data workers start
+    through forkserver (Python 3.14's default), fresh processes where torch.distributed is not
+    initialized, so they would all read rank 0 and every GPU would train on the same images."""
 
     def __init__(
         self,
@@ -48,7 +52,9 @@ class OnlineDataset(IterableDataset[Batch]):
         geometry_dropout: float = 0.1,
         restart: int = 0,
         bank_in_memory: bool = False,
+        rank: int | None = None,
     ) -> None:
+        self.rank = _rank() if rank is None else rank
         self.bank_path = Path(bank_path)
         self.synthesis = synthesis
         self.grid = grid
@@ -62,7 +68,7 @@ class OnlineDataset(IterableDataset[Batch]):
         single_threaded()
         info = get_worker_info()
         worker = info.id if info is not None else 0
-        rng = np.random.default_rng([self.seed, self.restart, _rank(), worker])
+        rng = np.random.default_rng([self.seed, self.restart, self.rank, worker])
         generator = SyntheticGenerator(
             ModalBank(self.bank_path, in_memory=self.bank_in_memory), self.synthesis
         )

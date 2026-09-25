@@ -3,8 +3,10 @@
 A synthetic image's truth is its modes' exact velocities, but a pick is only as good as what the
 image shows. M0 counts as pickable at a frequency when the image has a ridge peak within
 `tolerance` of M0's velocity, standing clearly above the noise floor, not dwarfed by the
-column's highest peak, at a wavelength the array does not alias. The network learns to say
-where that holds: its presence output is a probability that a pick there is right.
+column's highest peak, at a wavelength the array does not alias; and when that holds over a
+few neighbouring frequencies, for a random image has peaks everywhere and some fall near M0 by
+chance. The network learns to say where that holds: its presence output is a probability that
+a pick there is right.
 
 The image's own labels, for the quality head:
 
@@ -39,6 +41,15 @@ def _top_peak(image_row: np.ndarray, candidates: np.ndarray) -> int | None:
     return int(candidates[np.argmax(image_row[candidates])])
 
 
+def significance(traces: int, n_receivers: int, false_alarm: float) -> float:
+    """The phase-shift value random phases exceed with probability `false_alarm`.
+
+    The phase shift sums `traces` unit phasors (the traces with an offset: a virtual source's
+    own trace is weighed out) and divides by `n_receivers`; for random phases the sum's modulus
+    is Rayleigh-distributed, P(|sum| > h) = exp(-h^2 / traces)."""
+    return float(np.sqrt(traces * np.log(1.0 / false_alarm)) / n_receivers)
+
+
 def m0_visibility(
     image: np.ndarray,
     frequencies: np.ndarray,
@@ -46,9 +57,18 @@ def m0_visibility(
     c0: np.ndarray,
     geometry: Geometry,
     config: LabelConfig,
+    traces: int | None = None,
 ) -> np.ndarray:
-    """(n_f,) mask of the columns where M0 (velocities `c0`, NaN where absent) is pickable."""
-    floor = geometry.noise_floor
+    """(n_f,) mask of the columns where M0 (velocities `c0`, NaN where absent) is pickable.
+    `traces` is how many traces the phase shift weighs (all of them by default)."""
+    n = geometry.n_receivers
+    traces = n if traces is None else traces
+    floor = np.sqrt(traces) / n  # what random phases sum to
+    ceiling = traces / n  # what a perfect plane wave sums to
+    lowest_height = max(
+        floor + config.margin * (ceiling - floor),
+        significance(traces, n, config.false_alarm),
+    )
     step = float(np.median(np.diff(velocities)))
     peaks = local_peaks(image)
     lowest = config.alias_wavelength * geometry.spacing * frequencies
@@ -66,7 +86,7 @@ def m0_visibility(
         if abs(velocities[nearest] - c) > tolerance * c:
             continue
         height = float(image[i, nearest])
-        if height < floor + config.margin * (1.0 - floor):
+        if height < lowest_height:
             continue
         top = _top_peak(image[i], candidates)
         if top is not None and height < config.relative_height * float(image[i, top]):
@@ -76,8 +96,11 @@ def m0_visibility(
 
 
 def min_run(n_columns: int, config: LabelConfig) -> int:
-    """The shortest stretch that counts, in columns: `min_run`, less on very coarse images."""
-    return max(1, min(config.min_run, n_columns // 4))
+    """The shortest stretch that counts, in columns: `min_run`, or `min_run_share` of the
+    columns on fine images (chance peaks line up more often among many columns), less on very
+    coarse ones."""
+    wanted = max(config.min_run, round(config.min_run_share * n_columns))
+    return max(1, min(wanted, n_columns // 4))
 
 
 def runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -88,18 +111,17 @@ def runs(mask: np.ndarray) -> list[tuple[int, int]]:
 
 
 def clean_runs(mask: np.ndarray, config: LabelConfig) -> np.ndarray:
-    """The mask with short gaps closed (a pick bridges a column that noise spoiled) and short
-    stretches dropped (a lucky peak is not a ridge)."""
+    """The mask with short stretches dropped (a lucky peak is not a ridge), then gaps of up to
+    `gap` columns closed between the stretches left (a pick bridges a column that noise
+    spoiled). Dropping first: bridging first would chain lucky peaks into stretches."""
     out = mask.astype(bool).copy()
-    gap = max(1, round(config.gap * mask.size))
-    stretches = runs(out)
-    for (_, end), (start, _) in pairwise(stretches):
-        if start - end - 1 <= gap:
-            out[end + 1 : start] = True
     shortest = min_run(mask.size, config)
     for start, end in runs(out):
         if end - start + 1 < shortest:
             out[start : end + 1] = False
+    for (_, end), (start, _) in pairwise(runs(out)):
+        if start - end - 1 <= config.gap:
+            out[end + 1 : start] = True
     return out
 
 

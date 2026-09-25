@@ -127,3 +127,26 @@ def test_geometry() -> None:
     assert geometry.noise_floor == pytest.approx(0.5)
     with pytest.raises(ValueError, match="at least 2"):
         Geometry(n_receivers=1, spacing=1.0)
+
+
+def test_geometry_from_receivers_survives_folded_offsets() -> None:
+    from dispick.features import geometry_from_receivers
+
+    x = np.arange(24) * 1.0
+    geometry = geometry_from_receivers(x)
+    assert geometry is not None
+    assert geometry.spacing == pytest.approx(1.0)
+    assert geometry_from_receivers(np.zeros(5)) is None
+    assert geometry_from_receivers(np.array([0.0, np.nan])) is None
+    sigpipe = pytest.importorskip("sigpipe.base")
+    from dispick.integrations.sigpipe import geometry_of
+
+    # A source inside the spread folds sigpipe's offsets onto each other (review finding).
+    for source in (11.5, 11.3):
+        acquisition = sigpipe.LinearAcquisition(
+            source=sigpipe.Coordinate(source, 0.0, 0.0),
+            receivers=tuple(sigpipe.Coordinate(float(v), 0.0, 0.0) for v in x),
+        )
+        folded = geometry_of(acquisition)
+        assert folded is not None
+        assert folded.spacing == pytest.approx(1.0)

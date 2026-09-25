@@ -14,7 +14,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from dispick.features import Geometry
+from dispick.features import Geometry, geometry_from_receivers
 from dispick.inference.picker import ImageInput, Picker, PickSettings
 from dispick.inference.result import PickResult
 
@@ -32,17 +32,9 @@ class ImageFile:
 
     @property
     def geometry(self) -> Geometry | None:
-        if (
-            self.receivers is None
-            or len(self.receivers) < 2
-            or not np.isfinite(self.receivers).all()
-        ):
+        if self.receivers is None or self.receivers.ndim != 2 or self.receivers.shape[1] != 3:
             return None
-        ordered = self.receivers[np.argsort(self.receivers[:, 0])]
-        steps = np.hypot(np.diff(ordered[:, 0]), np.diff(ordered[:, 2]))
-        if not np.any(steps > 0):
-            return None
-        return Geometry(n_receivers=len(self.receivers), spacing=float(np.median(steps)))
+        return geometry_from_receivers(self.receivers[:, 0], self.receivers[:, 2])
 
 
 def _array(file: h5py.File, key: str, dtype: type = np.float64) -> np.ndarray | None:

@@ -93,16 +93,18 @@ Each training image draws, independently:
   - random noise at a signal-to-noise ratio shaped like a source band (peak -8 to 35 dB,
     roll-offs, ripple);
   - trace defects: coupling, dead traces, reversed polarities, timing errors;
-  - stacking (30 %): 2 to 4 records averaged, noise redrawn (passive: sources too).
+  - stacking (30 %): 2 to 4 records averaged, noise redrawn (passive: sources too);
+  - at 0 Hz, real values like sigpipe's DC bin (after normalization, only their signs are
+    left: the 0 Hz column is flat, from 0 for demeaned records to 1 for a shared offset).
 - **The transform** (`transform.py`): sigpipe's phase shift, step for step (sqrt(offset)
   weights, unit spectra, steering, division by the distinct offsets). Checked against sigpipe:
   the same image to 3e-6.
 
 Some images have nothing to pick, on purpose: noise only (4 %), coherent noise only (2 %),
 axes missing M0 (3 %); many more are unpickable by nature (a 5-receiver array at long
-wavelengths, low SNR). About 40 % of the images are unpickable; of the images from 3 to 6
-receivers, only 21 % are pickable, which agrees with what PACo measured on the demo's
-5-receiver windows.
+wavelengths, low SNR). About half the images are unpickable: only 10 % of those from 3 to 6
+receivers are pickable (as PACo measured on the demo's 5-receiver windows), 28 % from 7 to 12,
+46 % from 13 to 24, 67 % from 25 to 48 and 81 % from 49 up.
 
 A training image takes about 35 ms of one core, so training draws fresh images endlessly
 (`data/datasets.py`): the network never sees an image twice.
@@ -110,9 +112,12 @@ A training image takes about 35 ms of one core, so training draws fresh images e
 ## 3. One network for any axes and any array
 
 - **A fixed grid.** Each image is resampled onto 256 x 256 cells spanning its own axes
-  (`grid.py`): linear interpolation when refining, a tent average when coarsening (so a
-  2000-velocity image is not aliased), symmetric at the edges. The picks come back to the
-  image's own frequencies.
+  (`grid.py`): a tent average when coarsening (so a 2000-velocity image is not aliased),
+  symmetric at the edges; refining, velocities are interpolated linearly, while each
+  frequency row copies the image's nearest column (a row between two columns would blend two
+  ridges into one the image does not have). The training targets are made of the image's
+  columns with the same weights, so a target always sits on the ridge its row shows. The picks
+  come back to the image's own frequencies.
 - **Where each cell stands physically** (`features.py`), as input channels: the wavelength over
   twice the spacing (below 1 the array aliases) and over the aperture (above 1 it hardly
   resolves velocity: a broad ridge is then normal, not noise). With the coherence over the
@@ -125,11 +130,21 @@ A training image takes about 35 ms of one core, so training draws fresh images e
 
 The truth of a synthetic image is its modes' exact velocities, but a pick is only as good as
 what the image shows. M0 is **pickable at a frequency** (`synthesis/labels.py`) when the image
-has a ridge peak within 5 % of M0's velocity, at least 10 % of the way from the noise floor to
-1, at least 30 % as high as the column's highest peak, at a wavelength of at least 2 spacings
-(the spatial Nyquist limit, as sigpipe's and PACo's pickers start); stretches shorter than 3
-columns are dropped, gaps of a column or two bridged. The presence output learns that: it is
-the probability that a pick at that frequency lies within 5 % of M0.
+has a ridge peak within 5 % of M0's velocity that stands out from chance, at a wavelength of
+at least 2 spacings (the spatial Nyquist limit, as sigpipe's and PACo's pickers start):
+
+- at least 10 % of the way from the noise floor to a perfect plane wave, and above what random
+  phases reach 5 % of the time (a Rayleigh tail: sqrt(ln 20 / N) for N traces, counting only
+  the traces the phase shift weighs, so not a virtual source's own);
+- at least 30 % as high as the column's highest peak;
+- over a continuous stretch: stretches shorter than 3 columns (or 1 % of the columns, on fine
+  images) are dropped first, then single-column gaps between the stretches left are bridged.
+  In that order: a random image has peaks everywhere, some near M0 by chance, and bridging
+  first would chain them into stretches. On random records at 600 frequencies, under 1 % of
+  the columns come out pickable.
+
+The presence output learns that: it is the probability that a pick at that frequency lies
+within 5 % of M0.
 
 The image's labels:
 

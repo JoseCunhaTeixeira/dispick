@@ -82,9 +82,16 @@ def decode(
     return bins, spread(probabilities, bins, spread_window), presence
 
 
-def longest_run(mask: np.ndarray, frequencies: np.ndarray, max_gap: int = 1) -> np.ndarray:
-    """The mask reduced to its widest run in frequency, gaps of up to `max_gap` columns
-    bridged (the bridged columns stay unpicked)."""
+def longest_run(
+    mask: np.ndarray,
+    frequencies: np.ndarray,
+    max_gap: int = 1,
+    velocities: np.ndarray | None = None,
+) -> np.ndarray:
+    """The mask reduced to its widest run, gaps of up to `max_gap` columns bridged (the bridged
+    columns stay unpicked). Widest in octaves of wavelength when `velocities` are given (what a
+    curve is worth to an inversion), else in octaves of frequency; the mask's points must have
+    positive frequencies (and velocities)."""
     indices = np.flatnonzero(mask)
     out = np.zeros_like(mask, dtype=bool)
     if indices.size == 0:
@@ -92,8 +99,14 @@ def longest_run(mask: np.ndarray, frequencies: np.ndarray, max_gap: int = 1) -> 
     breaks = np.flatnonzero(np.diff(indices) > max_gap + 1)
     starts = np.concatenate([[0], breaks + 1])
     ends = np.concatenate([breaks, [indices.size - 1]])
-    widths = frequencies[indices[ends]] - frequencies[indices[starts]]
+    lows, highs = indices[starts], indices[ends]
+    if velocities is not None:
+        widths = np.abs(
+            np.log(velocities[lows] / frequencies[lows])
+            - np.log(velocities[highs] / frequencies[highs])
+        )
+    else:
+        widths = np.log(frequencies[highs] / frequencies[lows])
     best = int(np.argmax(widths))
-    first, last = indices[starts[best]], indices[ends[best]]
-    out[first : last + 1] = mask[first : last + 1]
+    out[lows[best] : highs[best] + 1] = mask[lows[best] : highs[best] + 1]
     return out

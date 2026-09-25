@@ -3,8 +3,11 @@
 A dispersion image comes with its own frequency and velocity axes: any range, any step, any
 size. The network works on one grid shape: each image is resampled onto linear axes spanning
 its own first to last frequency and velocity, with a tent kernel as wide as the coarser of the
-two steps (linear interpolation when refining, an average when coarsening, so a fine image is
-not aliased). Training and picking go through the same functions.
+two steps (an average when coarsening, so a fine image is not aliased). Refining, velocities
+are interpolated linearly, but frequencies are not: a row between two columns would blend two
+ridges into one the image does not have, so each row copies its nearest column. The training
+targets go through the same weights (`frequency_weights`), and training and picking through
+the same functions.
 """
 
 from dataclasses import dataclass
@@ -71,18 +74,25 @@ def check_axis(values: np.ndarray, name: str) -> np.ndarray:
     return values
 
 
-def resampling_matrix(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+def resampling_matrix(source: np.ndarray, target: np.ndarray, nearest: bool = False) -> np.ndarray:
     """Weights (len(target), len(source)) taking values on the increasing axis `source` to the
     increasing, regular axis `target`.
 
     Each target point averages the source points under a tent as wide as the coarser of the
-    two steps: plain linear interpolation when the target is finer, an anti-aliased average
-    when it is coarser. Targets beyond the source take its nearest end."""
+    two steps: plain linear interpolation when the target is finer (or, with `nearest`, the
+    nearest source point), an anti-aliased average when it is coarser. Targets beyond the
+    source take its nearest end."""
     source = check_axis(source, "source axis")
     target = check_axis(target, "target axis")
     source_step = float(np.median(np.diff(source)))
     target_step = float(target[1] - target[0])
     clipped = np.clip(target, source[0], source[-1])
+    if nearest and source_step > target_step:
+        weights = np.zeros((target.size, source.size))
+        weights[
+            np.arange(target.size), np.argmin(np.abs(source[None, :] - clipped[:, None]), axis=1)
+        ] = 1.0
+        return weights
     # Near the axis's ends the tent shrinks to stay symmetric (down to plain linear
     # interpolation at the ends): a one-sided average would bias the edge cells.
     room = np.minimum(clipped - source[0], source[-1] - clipped)
@@ -101,6 +111,11 @@ def resampling_matrix(source: np.ndarray, target: np.ndarray) -> np.ndarray:
             weights[row, right] = (clipped[row] - source[left]) / span
         totals = weights.sum(axis=1, keepdims=True)
     return weights / totals
+
+
+def frequency_weights(frequencies: np.ndarray, axes: CanonicalAxes) -> np.ndarray:
+    """How each canonical row is made of the image's columns: (F, n_f), rows summing to 1."""
+    return resampling_matrix(frequencies, axes.frequencies, nearest=True)
 
 
 def to_canonical(
@@ -124,7 +139,7 @@ def to_canonical(
     f_range = f_range or (float(frequencies[0]), float(frequencies[-1]))
     v_range = v_range or (float(velocities[0]), float(velocities[-1]))
     axes = grid.axes(f_range, v_range)
-    rows = resampling_matrix(frequencies, axes.frequencies).astype(np.float32)
+    rows = frequency_weights(frequencies, axes).astype(np.float32)
     columns = resampling_matrix(velocities, axes.velocities).astype(np.float32)
     return rows @ image @ columns.T, axes
 

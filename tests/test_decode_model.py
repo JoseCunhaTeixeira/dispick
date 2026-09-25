@@ -137,3 +137,14 @@ def test_soft_targets_and_metrics() -> None:
     confused = Metrics()
     confused.update(outputs | {"logits": logits}, batch)
     assert confused.summary()["mode_confusion"] == pytest.approx(1.0)
+
+
+def test_longest_run_prefers_the_widest_wavelength_span() -> None:
+    """5-15 Hz spans 1.6 octaves, 30-45 Hz only 0.6, though it is wider in Hz (review
+    finding: the run widest in Hz was kept)."""
+    frequencies = np.arange(1.0, 51.0)
+    mask = ((frequencies >= 5) & (frequencies <= 15)) | ((frequencies >= 30) & (frequencies <= 45))
+    velocities = np.full(frequencies.size, 200.0)
+    kept = longest_run(mask, frequencies, max_gap=1, velocities=velocities)
+    assert frequencies[kept].min() == 5.0
+    assert frequencies[kept].max() == 15.0

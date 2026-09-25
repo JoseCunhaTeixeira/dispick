@@ -84,11 +84,17 @@ class Backend(Protocol):
 
 
 class OnnxBackend:
-    def __init__(self, path: Path, providers: list[str] | None = None) -> None:
+    def __init__(
+        self, path: Path, providers: list[str] | None = None, threads: int | None = None
+    ) -> None:
         import onnxruntime
 
         options = onnxruntime.SessionOptions()
         options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+        if threads is not None:
+            # Several pickers in parallel processes (PACo's workers): one pool each, not all cores.
+            options.intra_op_num_threads = threads
+            options.inter_op_num_threads = 1
         available = onnxruntime.get_available_providers()
         chosen = [p for p in (providers or ["CPUExecutionProvider"]) if p in available]
         self.session = onnxruntime.InferenceSession(
@@ -120,14 +126,17 @@ class TorchBackend:
         return {key: value.float().cpu().numpy() for key, value in outputs.items()}
 
 
-def load_backend(path: Path, device: str = "cpu") -> tuple[Backend, ModelCard]:
+def load_backend(
+    path: Path, device: str = "cpu", threads: int | None = None
+) -> tuple[Backend, ModelCard]:
+    """The model at `path` and its card; `threads` caps the CPU threads it uses."""
     path = Path(path)
     if path.suffix == ".onnx":
         card_path = path.with_suffix(".json")
         if not card_path.exists():
             raise FileNotFoundError(f"{path}: its model card {card_path.name} is missing")
         providers = ["CUDAExecutionProvider", "ROCMExecutionProvider"] if device != "cpu" else None
-        return OnnxBackend(path, providers), ModelCard.from_json(card_path.read_text())
+        return OnnxBackend(path, providers, threads), ModelCard.from_json(card_path.read_text())
     if path.suffix == ".pt":
         from dispick.training.trainer import load_checkpoint
 

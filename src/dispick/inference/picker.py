@@ -74,9 +74,12 @@ class Picker:
         self.grid = CanonicalGrid(*card.grid)
 
     @classmethod
-    def load(cls, path: Path | str | None = None, device: str = "cpu") -> Picker:
-        """The model at `path` (.onnx with its .json card, or a .pt checkpoint)."""
-        backend, card = load_backend(Path(path) if path else default_model_path(), device)
+    def load(
+        cls, path: Path | str | None = None, device: str = "cpu", threads: int | None = None
+    ) -> Picker:
+        """The model at `path` (.onnx with its .json card, or a .pt checkpoint); `threads`
+        caps the CPU threads an ONNX model uses (one per process when picking in parallel)."""
+        backend, card = load_backend(Path(path) if path else default_model_path(), device, threads)
         return cls(backend, card)
 
     def pick(
@@ -187,7 +190,7 @@ class Picker:
             & (velocities <= v_high)
         )
         if settings.continuous:
-            picked = longest_run(picked, fs, settings.max_gap)
+            picked = longest_run(picked, fs, settings.max_gap, velocities)
         return PickResult(
             frequencies=fs,
             velocities=velocities,

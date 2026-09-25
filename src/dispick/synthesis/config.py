@@ -126,11 +126,14 @@ class LabelConfig(_Section):
     """When M0 counts as pickable at a frequency, and an image as pickable."""
 
     tolerance: float = Field(default=0.05, gt=0)  # the ridge's peak within 5 % of M0
-    margin: float = Field(default=0.1, ge=0, lt=1)  # above the floor, share of floor-to-1
+    margin: float = Field(default=0.1, ge=0, lt=1)  # above the floor, share of floor-to-ceiling
+    # ... and above what random phases reach with this probability (the Rayleigh tail).
+    false_alarm: float = Field(default=0.05, gt=0, lt=1)
     relative_height: float = Field(default=0.3, ge=0, le=1)  # of the column's highest peak
     alias_wavelength: float = Field(default=2.0, ge=0)  # shortest wavelength, in spacings
     min_run: int = Field(default=3, ge=1)  # columns, for a visible stretch to count
-    gap: float = Field(default=0.02, ge=0)  # gaps closed, as a share of the columns
+    min_run_share: float = Field(default=0.01, ge=0, le=1)  # ... or this share of them
+    gap: int = Field(default=1, ge=0)  # columns bridged between stretches
     min_octaves: float = Field(default=0.5, ge=0)  # wavelength span of a pickable image
     quality_octaves: float = Field(default=3.0, gt=0)  # the span that rates 1
 

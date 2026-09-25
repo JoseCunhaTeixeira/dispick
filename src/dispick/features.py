@@ -56,6 +56,23 @@ class Geometry:
         return cls(n_receivers=int(positions.size), spacing=float(np.median(np.diff(positions))))
 
 
+def geometry_from_receivers(x: np.ndarray, z: np.ndarray | None = None) -> Geometry | None:
+    """The geometry of receivers at positions `x` (and elevations `z`) along a line: their
+    count, and the median distance between neighbours along the ground. None when the
+    positions are unknown or all equal. Positions, not source offsets: a source inside the
+    spread folds the offsets onto each other."""
+    x = np.asarray(x, dtype=np.float64)
+    z = np.zeros_like(x) if z is None else np.asarray(z, dtype=np.float64)
+    if x.size < 2 or not (np.isfinite(x).all() and np.isfinite(z).all()):
+        return None
+    order = np.argsort(x, kind="stable")
+    steps = np.hypot(np.diff(x[order]), np.diff(z[order]))
+    steps = steps[steps > 1e-9]
+    if steps.size == 0:
+        return None
+    return Geometry(n_receivers=int(x.size), spacing=float(np.median(steps)))
+
+
 def normalize_coherence(image: np.ndarray, floor: float) -> np.ndarray:
     """The image's values above `floor`, over what is left up to 1, clipped to [0, 1]. An image
     outside [0, 1] (not a raw phase-shift image) is first rescaled to it, and `floor` ignored."""
