@@ -1,10 +1,11 @@
-# dispick: generated data, training runs, models under training
-data/
-runs/
+# dispick: generated data, training runs, models under training. Anchored at the root: an
+# unanchored `data/` would also hide the src/dispick/data package.
+/data/
+/runs/
+/logs/
 *.h5
 *.hdf5
 !tests/data/*.hdf5
-logs/
 
 .claude/
 
